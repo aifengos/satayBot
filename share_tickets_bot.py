@@ -247,9 +247,9 @@ async def create_car_info(update: Update, context: CallbackContext):
                 except:
                     print('Not Member of Channel ' + channel_id)
             await context.bot.send_message(chat_id=update.effective_chat.id, text='<b>发车成功：</b>',
-                                           parse_mode= 'HTML')
+                                           parse_mode='HTML')
             await context.bot.send_message(chat_id=update.effective_chat.id, text=car_info_str,
-                                           parse_mode= 'HTML')
+                                           parse_mode='HTML')
         else:
             await context.bot.send_message(chat_id=update.effective_chat.id,
                                            text='请设置频道来公开信息：\n' + car_info_str)

@@ -18,7 +18,9 @@ from telegram.ext import (
     CallbackContext
 )
 
-BOT_TOKEN = ""
+BOT_TOKEN = ''
+
+CHAT_TIMEOUT = 60
 
 MENUS = ['新增求片', '当前列表', '更新列表（管理媛）']
 TYPES = ['Anime & 动漫', 'Documentary & 纪录片', 'Movie & 电影', 'Series & 电视剧', 'Show & 综艺']
@@ -35,12 +37,13 @@ UPDATE_OPT_ID = dict()
 DELETE_MESSAGE_ID = dict()
 
 ADMIN_USERS = []
+
 initial = True
 
 db_host = 'localhost'
-db_user = 'sweets'
-db_pw = 'Share2022'
-db_name = 'car_info'
+db_user = ''
+db_pw = ''
+db_name = ''
 
 
 # Enable logging
@@ -51,14 +54,36 @@ logger = logging.getLogger(__name__)
 
 
 def db_init():
+    # conn = psycopg2.connect(dbname=db_name, host=db_host,
+    #                         user=db_user, password=db_pw)
+    # cur = conn.cursor()
+    # cur.execute(
+    #     'DROP TABLE IF EXISTS wanted_info; CREATE TABLE IF NOT EXISTS wanted_info (wanted_id text, ' +
+    #     'wanted_type text, wanted_region text, wanted_title text, wanted_date text, wanted_tmdb text, ' +
+    #     'user_id text, user_name text, wanted_time text, wanted_status text, update_time text);')
+    # conn.commit()  # <- We MUST commit to reflect the inserted data
+    # cur.close()
+    # conn.close()
     conn = psycopg2.connect(dbname=db_name, host=db_host,
                             user=db_user, password=db_pw)
     cur = conn.cursor()
-    cur.execute(
-        'DROP TABLE IF EXISTS wanted_info; CREATE TABLE IF NOT EXISTS wanted_info (wanted_id text, ' +
-        'wanted_type text, wanted_region text, wanted_title text, wanted_date text, wanted_tmdb text, ' +
-        'user_id text, user_name text, wanted_time text, wanted_status text, update_time text);')
-    conn.commit()  # <- We MUST commit to reflect the inserted data
+    video_data = get_list(False)
+    video_data['ID'] = video_data['ID'].astype(int)
+    max_id = video_data['ID'].max()
+    dup_video_data = video_data[video_data['ID'].duplicated(keep=False)].copy()
+    dup_video_data.sort_values(['ID', 'ReqTime'], inplace=True)
+    prev_id = 0
+    for dup_records in dup_video_data[['ID', 'Type', 'Region', 'Title', 'Date', 'TMDB', 'user_id', 'ReqTime']].values:
+        if dup_records[0] == prev_id:
+            max_id += 1
+            update_cmd = ("UPDATE wanted_info SET wanted_id = '" + str(max_id) +
+                          "'  WHERE wanted_title='" + dup_records[3] + "' AND  user_id='" + dup_records[6] +
+                          "' AND wanted_time='" + dup_records[7] + "'")
+            print(update_cmd)
+            cur.execute(update_cmd)
+            conn.commit()  # <- We MUST commit to reflect the inserted data
+        else:
+            prev_id = dup_records[0]
     cur.close()
     conn.close()
 
@@ -68,7 +93,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Get user that sent /start and log his name
     user = update.message.from_user
     logger.info("User %s started the conversation.", user.first_name)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text='欢迎使用Texon求片机器人', parse_mode='HTML')
+    await context.bot.send_message(chat_id=update.effective_chat.id,
+                                   text='欢迎使用Texon求片机器人，所有操作请在' + str(CHAT_TIMEOUT) + 's内完成',
+                                   parse_mode='HTML')
     # Tell ConversationHandler that we're in state `FIRST` now
     return ConversationHandler.END
 
@@ -199,7 +226,7 @@ async def finish_input(update: Update, context: CallbackContext):
             WANTED_DICT[user_id]['User'] = ('<a href="tg://user?id=' + html_format(str(user_id)) + '">' +
                                             html_format(str(user_id)) + '</a>')
 
-        admin_notify = ('有新的求片请求：\nReq_ID: ' + video_id + '\n' + '\n'.join(
+        admin_notify = ('有新的求片请求：\nReq_ID: <b>' + video_id + '</b>\n' + '\n'.join(
             [k + ': <b>' + v + '</b>' for k, v in WANTED_DICT[user_id].items()]))
         for admin_id in ADMIN_USERS:
             # if user_id != admin_id:
@@ -259,8 +286,8 @@ async def seesee(update: Update, context: ContextTypes.DEFAULT_TYPE):
         want_info = '<b>当前没有求片请求</b>'
     await context.bot.send_message(chat_id=update.effective_chat.id,
                                    text=want_info, parse_mode='HTML', disable_web_page_preview=True)
-    await context.bot.send_message(chat_id=update.effective_chat.id,
-                                   text='<b>欢迎再次使用Texon求片机器人</b>', parse_mode='HTML')
+    # await context.bot.send_message(chat_id=update.effective_chat.id,
+    #                                text='<b>欢迎再次使用Texon求片机器人</b>', parse_mode='HTML')
     return ConversationHandler.END
 
 
@@ -385,7 +412,7 @@ def add_wanted(update, info_dict):
     wanted_title = info_dict['Title']
     wanted_date = info_dict["Date"]
     wanted_tmdb = info_dict["TMDB"]
-    wanted_data = get_list()
+    wanted_data = get_list(False)
     if not wanted_data.empty:
         max_id = wanted_data['ID'].astype(int).max()
     else:
@@ -474,6 +501,13 @@ def html_format(input_str):
     return input_str.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 
+async def timeout(update, context):
+    user_id = update.effective_chat.id
+    timeout_text = '<b>' + str(CHAT_TIMEOUT) + 's</b>内没有完成操作，<b>请重新开始操作</b>'
+    await context.bot.send_message(chat_id=user_id, text=timeout_text, parse_mode='HTML',
+                                   disable_web_page_preview=True)
+
+
 def main() -> None:
     if initial:
         db_init()
@@ -490,10 +524,11 @@ def main() -> None:
             'TITLE': [CallbackQueryHandler(title_input)],
             'DATE': [MessageHandler(filters.TEXT, date_input)],
             'TMDB': [MessageHandler(filters.TEXT, tmdb_input)],
-            'SUMMARY': [MessageHandler(filters.TEXT, finish_input)]
+            'SUMMARY': [MessageHandler(filters.TEXT, finish_input)],
+            ConversationHandler.TIMEOUT: [MessageHandler(filters.TEXT | filters.COMMAND, timeout)]
         },
         fallbacks=[CommandHandler('end', cov_end)],
-        conversation_timeout=60
+        conversation_timeout=CHAT_TIMEOUT
     )
 
     seesee_handler = CommandHandler('seesee', seesee)
@@ -504,9 +539,10 @@ def main() -> None:
             'UPDATE_OPT': [CallbackQueryHandler(update_opt)],
             'INPUT_ID': [MessageHandler(filters.TEXT, input_id)],
             'CHANGE': [CallbackQueryHandler(update_finish)],
+            ConversationHandler.TIMEOUT: [MessageHandler(filters.TEXT | filters.COMMAND, timeout)]
         },
         fallbacks=[CommandHandler('end', cov_end)],
-        conversation_timeout=60
+        conversation_timeout=CHAT_TIMEOUT
     )
     application.add_handler(start_handler)
     application.add_handler(wanted_handler)
@@ -517,7 +553,7 @@ def main() -> None:
     # application.run_polling()
     application.run_webhook(
         listen='0.0.0.0',
-        port=8443,
+        port=443,
         url_path='',
         key='',
         cert='',
